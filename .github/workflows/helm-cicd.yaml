@@ -1,0 +1,119 @@
+
+name: Helm CI-CD Pipeline
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+
+  # Job 1: Checkout Chart
+  checkout-chart:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Display project files
+        run: |
+          ls -la
+          ls -la charts/my-chart
+
+
+  # Job 2: Verify Helm Chart
+  verify-chart:
+    runs-on: ubuntu-latest
+    needs: checkout-chart
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Verify Helm Chart Files
+        run: |
+          test -f charts/my-chart/Chart.yaml
+          test -f charts/my-chart/values.yaml
+          test -d charts/my-chart/templates
+
+          echo "Helm chart verification successful"
+
+
+  # Job 3: Helm Lint
+  helm-lint:
+    runs-on: ubuntu-latest
+    needs: verify-chart
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Lint Helm Chart
+        run: |
+          helm lint ./charts/my-chart
+
+
+  # Job 4: Helm Package
+  helm-package:
+    runs-on: ubuntu-latest
+    needs: helm-lint
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Package Helm Chart
+        run: |
+          mkdir -p packages
+          helm package ./charts/my-chart --destination ./packages
+
+      - name: Upload Helm Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart-package
+          path: packages/*.tgz
+          if-no-files-found: error
+
+
+  # Job 5: Publish Helm Chart to JFrog
+  helm-publish:
+    runs-on: ubuntu-latest
+    needs: helm-package
+
+    steps:
+      - name: Download Helm Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-chart-package
+          path: packages
+
+      - name: Publish Helm Chart to JFrog
+        env:
+          JFROG_URL: ${{ secrets.JFROG_URL }}
+          JFROG_TOKEN: ${{ secrets.JFROG_TOKEN }}
+        run: |
+          CHART_PACKAGE=$(find packages -name "*.tgz" -print -quit)
+
+          test -n "$CHART_PACKAGE"
+
+          JFROG_URL="${JFROG_URL%/}"
+
+          curl -f -H "Authorization: Bearer $JFROG_TOKEN" \
+            -T "$CHART_PACKAGE" \
+            "$JFROG_URL/artifactory/helm-local/$(basename "$CHART_PACKAGE")"
+
+          echo "Helm chart published successfully to JFrog"
